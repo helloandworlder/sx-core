@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+package xray.app.ratelimit.command;
+option csharp_namespace = "Xray.App.RateLimit.Command";
+option go_package = "github.com/xtls/xray-core/app/ratelimit/command";
+option java_package = "com.xray.app.ratelimit.command";
+option java_multiple_files = true;
+
+message UserRateLimit {
+  string email = 1;
+  int64 egress_limit_bps = 2;
+  int64 ingress_limit_bps = 3;
+  int64 egress_bps = 4;
+  int64 ingress_bps = 5;
+}
+
+message SetUserRateLimitRequest {
+  string email = 1;
+  int64 egress_bps = 2;
+  int64 ingress_bps = 3;
+}
+
+message SetUserRateLimitResponse {}
+
+message GetUserRateLimitRequest {
+  string email = 1;
+}
+
+message GetUserRateLimitResponse {
+  UserRateLimit info = 1;
+}
+
+message RemoveUserRateLimitRequest {
+  string email = 1;
+}
+
+message RemoveUserRateLimitResponse {}
+
+message GetUserSpeedRequest {
+  string email = 1;
+}
+
+message GetUserSpeedResponse {
+  string email = 1;
+  int64 egress_bps = 2;
+  int64 ingress_bps = 3;
+}
+
+message ListUserSpeedsRequest {}
+
+message ListUserSpeedsResponse {
+  repeated UserRateLimit infos = 1;
+}
+
+service RateLimitService {
+  rpc SetUserRateLimit(SetUserRateLimitRequest) returns (SetUserRateLimitResponse) {}
+  rpc GetUserRateLimit(GetUserRateLimitRequest) returns (GetUserRateLimitResponse) {}
+  rpc RemoveUserRateLimit(RemoveUserRateLimitRequest) returns (RemoveUserRateLimitResponse) {}
+  rpc GetUserSpeed(GetUserSpeedRequest) returns (GetUserSpeedResponse) {}
+  rpc ListUserSpeeds(ListUserSpeedsRequest) returns (ListUserSpeedsResponse) {}
+}
+
+message Config {}
