@@ -13,12 +13,18 @@ func TestTokenBucket_BasicRateLimit(t *testing.T) {
 		t.Fatal("expected non-nil bucket")
 	}
 
+	if tb.capacity <= 0 {
+		t.Fatalf("expected positive burst tolerance, got %d", tb.capacity)
+	}
+
+	// The first paced chunk may pass immediately, but consecutive chunks should
+	// be scheduled instead of getting a 1s free burst.
+	tb.Wait(tb.quantum)
 	start := time.Now()
-	// Consume 500KB — should be instant (within burst capacity)
-	tb.Wait(500_000)
+	tb.Wait(tb.quantum)
 	elapsed := time.Since(start)
-	if elapsed > 100*time.Millisecond {
-		t.Errorf("500KB within burst should be instant, took %v", elapsed)
+	if elapsed < 70*time.Millisecond {
+		t.Errorf("expected paced scheduling on consecutive chunks, got %v", elapsed)
 	}
 }
 
@@ -26,16 +32,16 @@ func TestTokenBucket_WaitBlocksWhenEmpty(t *testing.T) {
 	// 100KB/s rate
 	tb := NewTokenBucket(100_000)
 
-	// Drain the bucket
-	tb.Wait(100_000)
+	// A burst-sized chunk may pass quickly, but the next one should wait for pacing.
+	tb.Wait(tb.capacity)
 
-	// Next 100KB should take ~1 second
+	// Next chunk should still wait for pacing.
 	start := time.Now()
-	tb.Wait(100_000)
+	tb.Wait(tb.capacity)
 	elapsed := time.Since(start)
 
-	if elapsed < 500*time.Millisecond {
-		t.Errorf("expected wait >=500ms after draining, got %v", elapsed)
+	if elapsed < 30*time.Millisecond {
+		t.Errorf("expected wait >=30ms after draining, got %v", elapsed)
 	}
 	if elapsed > 3*time.Second {
 		t.Errorf("expected wait <3s, got %v (too slow)", elapsed)
@@ -65,6 +71,12 @@ func TestTokenBucket_UpdateRate(t *testing.T) {
 	tb.UpdateRate(500)
 	if tb.Rate() != 500 {
 		t.Errorf("expected rate 500, got %d", tb.Rate())
+	}
+	if tb.capacity <= 0 || tb.capacity > tb.rate {
+		t.Errorf("expected bounded burst capacity, got capacity=%d rate=%d", tb.capacity, tb.rate)
+	}
+	if tb.quantum <= 0 {
+		t.Errorf("expected positive pacing quantum, got %d", tb.quantum)
 	}
 }
 

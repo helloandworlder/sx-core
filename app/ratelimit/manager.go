@@ -17,6 +17,11 @@ type RateLimitManager struct {
 
 // Set creates or updates the rate limit for a user.
 func (m *RateLimitManager) Set(email string, egressBps, ingressBps int64) *UserLimiter {
+	if egressBps <= 0 && ingressBps <= 0 {
+		m.users.Delete(email)
+		return nil
+	}
+
 	existing, ok := m.users.Load(email)
 	if ok {
 		ul := existing.(*UserLimiter)
@@ -64,9 +69,9 @@ func (m *RateLimitManager) ListAll() []UserSpeedInfo {
 		ul := value.(*UserLimiter)
 		eSpeed, iSpeed := ul.Speed()
 		info := UserSpeedInfo{
-			Email:       email,
-			EgressBps:   eSpeed,
-			IngressBps:  iSpeed,
+			Email:      email,
+			EgressBps:  eSpeed,
+			IngressBps: iSpeed,
 		}
 		if ul.Egress != nil {
 			info.EgressLimitBps = ul.Egress.Rate()

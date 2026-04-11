@@ -10,78 +10,118 @@ import (
 	"time"
 )
 
+const (
+	// Keep only a very small scheduling tolerance so throughput stays smooth.
+	defaultBurstWindow = 50 * time.Millisecond
+	// Pace traffic in coarse slices to reduce wakeups and lock contention.
+	defaultPacingWindow = 100 * time.Millisecond
+	minChunkBytes       = 4 * 1024
+)
+
 // TokenBucket implements a classic token bucket rate limiter.
 // It is safe for concurrent use.
 type TokenBucket struct {
-	rate       int64 // tokens (bytes) added per second
-	capacity   int64 // max burst size
-	tokens     int64 // current available tokens
-	lastRefill int64 // unix nanoseconds of last refill
-	mu         sync.Mutex
+	rate          int64 // bytes added per second
+	capacity      int64 // max scheduling tolerance in bytes
+	quantum       int64 // preferred paced chunk size in bytes
+	nextAvailable int64 // unix nanoseconds when the next chunk may be sent
+	mu            sync.Mutex
 }
 
 // NewTokenBucket creates a token bucket with the given rate (bytes/sec).
-// Burst capacity is set to rate (1 second of buffering).
+// Internally it behaves as a paced leaky bucket with a tiny burst tolerance.
 func NewTokenBucket(bytesPerSec int64) *TokenBucket {
 	if bytesPerSec <= 0 {
 		return nil // no limit
 	}
 	return &TokenBucket{
-		rate:       bytesPerSec,
-		capacity:   bytesPerSec, // 1s burst
-		tokens:     bytesPerSec, // start full
-		lastRefill: time.Now().UnixNano(),
+		rate:          bytesPerSec,
+		capacity:      burstBytes(bytesPerSec),
+		quantum:       pacingQuantum(bytesPerSec),
+		nextAvailable: time.Now().UnixNano(),
 	}
 }
 
-// Wait blocks until n tokens (bytes) are available, consuming them.
-// For large transfers, it may wait in chunks to avoid long blocking.
+// Wait blocks until n bytes may be sent. Most calls sleep at most once; only
+// unusually large buffers are split into paced chunks.
 func (tb *TokenBucket) Wait(n int64) {
 	if tb == nil || n <= 0 {
 		return
 	}
 
 	for n > 0 {
-		tb.mu.Lock()
-		tb.refillLocked()
-		consume := minInt64(n, tb.tokens)
-		if consume > 0 {
-			tb.tokens -= consume
-			n -= consume
+		chunk := n
+		if tb.quantum > 0 && chunk > tb.quantum {
+			chunk = tb.quantum
 		}
-		rate := tb.rate
-		tb.mu.Unlock()
-
-		if n > 0 {
-			waitNs := (n * int64(time.Second)) / rate
-			if waitNs < int64(time.Millisecond) {
-				waitNs = int64(time.Millisecond)
-			}
-			if waitNs > int64(100*time.Millisecond) {
-				waitNs = int64(100 * time.Millisecond)
-			}
-			time.Sleep(time.Duration(waitNs))
+		sleepFor := tb.reserve(chunk)
+		if sleepFor > 0 {
+			time.Sleep(sleepFor)
 		}
+		n -= chunk
 	}
 }
 
-func (tb *TokenBucket) refillLocked() {
+func (tb *TokenBucket) reserve(chunk int64) time.Duration {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+
 	now := time.Now().UnixNano()
-	elapsed := now - tb.lastRefill
-	if elapsed <= 0 {
-		return
+	if tb.nextAvailable < now-int64(defaultBurstWindow) {
+		tb.nextAvailable = now - int64(defaultBurstWindow)
 	}
 
-	newTokens := (elapsed * tb.rate) / int64(time.Second)
-	if newTokens <= 0 {
-		return
+	startAt := tb.nextAvailable
+	if startAt < now {
+		startAt = now
 	}
+	serviceNs := chunkDurationNs(chunk, tb.rate)
+	tb.nextAvailable = startAt + serviceNs
 
-	tb.tokens += newTokens
-	if tb.tokens > tb.capacity {
-		tb.tokens = tb.capacity
+	if startAt <= now {
+		return 0
 	}
-	tb.lastRefill = now
+	return time.Duration(startAt - now)
+}
+
+func chunkDurationNs(chunk, rate int64) int64 {
+	if chunk <= 0 || rate <= 0 {
+		return 0
+	}
+	ns := (chunk * int64(time.Second)) / rate
+	if ns <= 0 {
+		return 1
+	}
+	return ns
+}
+
+func burstBytes(rate int64) int64 {
+	burst := (rate * int64(defaultBurstWindow)) / int64(time.Second)
+	if burst < minChunkBytes {
+		burst = minChunkBytes
+	}
+	if burst > rate {
+		burst = rate
+	}
+	if burst <= 0 {
+		return 1
+	}
+	return burst
+}
+
+func pacingQuantum(rate int64) int64 {
+	quantum := (rate * int64(defaultPacingWindow)) / int64(time.Second)
+	if quantum < minChunkBytes {
+		quantum = minChunkBytes
+	}
+	if quantum <= 0 {
+		quantum = 1
+	}
+	return quantum
+}
+
+func (tb *TokenBucket) refillLocked() {
+	// No-op: pacing is managed via nextAvailable scheduling.
 }
 
 // UpdateRate changes the rate limit dynamically.
@@ -89,9 +129,11 @@ func (tb *TokenBucket) UpdateRate(bytesPerSec int64) {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 	tb.rate = bytesPerSec
-	tb.capacity = bytesPerSec
-	if tb.tokens > tb.capacity {
-		tb.tokens = tb.capacity
+	tb.capacity = burstBytes(bytesPerSec)
+	tb.quantum = pacingQuantum(bytesPerSec)
+	now := time.Now().UnixNano()
+	if tb.nextAvailable < now-int64(defaultBurstWindow) {
+		tb.nextAvailable = now - int64(defaultBurstWindow)
 	}
 }
 

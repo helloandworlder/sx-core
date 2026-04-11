@@ -15,6 +15,7 @@ import (
 	"github.com/xtls/xray-core/common/task"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/features/policy"
+	"github.com/xtls/xray-core/proxy"
 	"github.com/xtls/xray-core/transport"
 	"github.com/xtls/xray-core/transport/internet"
 	"github.com/xtls/xray-core/transport/internet/stat"
@@ -136,11 +137,13 @@ func (c *Client) Process(ctx context.Context, link *transport.Link, dialer inter
 	if request.Command == protocol.RequestCommandTCP {
 		requestFunc = func() error {
 			defer timer.SetTimeout(p.Timeouts.DownlinkOnly)
+			proxy.BindActivity(timer, link.Reader)
 			return buf.Copy(link.Reader, buf.NewWriter(conn), buf.UpdateActivity(timer))
 		}
 		responseFunc = func() error {
 			ob.CanSpliceCopy = 1
 			defer timer.SetTimeout(p.Timeouts.UplinkOnly)
+			proxy.BindActivity(timer, link.Writer)
 			return buf.Copy(buf.NewReader(conn), link.Writer, buf.UpdateActivity(timer))
 		}
 	} else if request.Command == protocol.RequestCommandUDP {

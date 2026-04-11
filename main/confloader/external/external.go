@@ -3,18 +3,30 @@ package external
 import (
 	"bytes"
 	"context"
-	"net"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/xtls/xray-core/common/buf"
 	"github.com/xtls/xray-core/common/errors"
 	"github.com/xtls/xray-core/main/confloader"
 )
+
+const maxConfigBytes = 8 * 1024 * 1024
+
+func readLimited(reader io.Reader) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(reader, maxConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(content) > maxConfigBytes {
+		return nil, errors.New("config content exceeds size limit")
+	}
+	return content, nil
+}
 
 func ConfigLoader(arg string) (out io.Reader, err error) {
 	var data []byte
@@ -26,9 +38,12 @@ func ConfigLoader(arg string) (out io.Reader, err error) {
 		data, err = FetchHTTPContent(arg)
 
 	case arg == "stdin:":
-		data, err = io.ReadAll(os.Stdin)
+		data, err = readLimited(os.Stdin)
 
 	default:
+		if info, statErr := os.Stat(arg); statErr == nil && info.Size() > maxConfigBytes {
+			return nil, errors.New("config file exceeds size limit")
+		}
 		data, err = os.ReadFile(arg)
 	}
 
@@ -66,7 +81,7 @@ func FetchHTTPContent(target string) ([]byte, error) {
 		return nil, errors.New("unexpected HTTP status code: ", resp.StatusCode)
 	}
 
-	content, err := buf.ReadAllToBytes(resp.Body)
+	content, err := readLimited(resp.Body)
 	if err != nil {
 		return nil, errors.New("failed to read HTTP response").Base(err)
 	}
@@ -77,13 +92,13 @@ func FetchHTTPContent(target string) ([]byte, error) {
 // Format: http+unix:///path/to/socket.sock/api/endpoint
 func FetchUnixSocketHTTPContent(target string) ([]byte, error) {
 	path := strings.TrimPrefix(target, "http+unix://")
-	
+
 	if !strings.HasPrefix(path, "/") {
 		return nil, errors.New("unix socket path must be absolute")
 	}
-	
+
 	var socketPath, httpPath string
-	
+
 	sockIdx := strings.Index(path, ".sock")
 	if sockIdx != -1 {
 		socketPath = path[:sockIdx+5]
@@ -94,11 +109,11 @@ func FetchUnixSocketHTTPContent(target string) ([]byte, error) {
 	} else {
 		return nil, errors.New("cannot determine socket path, socket file should have .sock extension")
 	}
-	
+
 	if _, err := os.Stat(socketPath); err != nil {
 		return nil, errors.New("socket file not found: ", socketPath).Base(err)
 	}
-	
+
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
@@ -109,22 +124,22 @@ func FetchUnixSocketHTTPContent(target string) ([]byte, error) {
 		},
 	}
 	defer client.CloseIdleConnections()
-	
+
 	resp, err := client.Get("http://localhost" + httpPath)
 	if err != nil {
 		return nil, errors.New("failed to fetch from unix socket: ", socketPath).Base(err)
 	}
 	defer resp.Body.Close()
-	
+
 	if resp.StatusCode != 200 {
 		return nil, errors.New("unexpected HTTP status code: ", resp.StatusCode)
 	}
-	
-	content, err := buf.ReadAllToBytes(resp.Body)
+
+	content, err := readLimited(resp.Body)
 	if err != nil {
 		return nil, errors.New("failed to read response").Base(err)
 	}
-	
+
 	return content, nil
 }
 

@@ -87,6 +87,9 @@ type WebhookNotifier struct {
 	client        *http.Client
 	seen          sync.Map
 	done          chan struct{}
+	ctx           context.Context
+	cancel        context.CancelFunc
+	sem           chan struct{}
 	wg            sync.WaitGroup
 	closeOnce     sync.Once
 }
@@ -104,7 +107,9 @@ func NewWebhookNotifier(cfg *WebhookConfig) (*WebhookNotifier, error) {
 			Timeout: 5 * time.Second,
 		},
 		done: make(chan struct{}),
+		sem:  make(chan struct{}, 32),
 	}
+	h.ctx, h.cancel = context.WithCancel(context.Background())
 
 	if socketPath != "" {
 		dialAddr := resolveSocketPath(socketPath)
@@ -142,15 +147,19 @@ func (h *WebhookNotifier) Fire(ctx routing.Context, outboundTag string) {
 		return
 	}
 
-	h.wg.Add(1)
 	select {
 	case <-h.done:
-		h.wg.Done()
 		return
+	case h.sem <- struct{}{}:
 	default:
+		errors.LogWarning(context.Background(), "webhook: dropping event due to concurrency limit")
+		return
 	}
+
+	h.wg.Add(1)
 	go func() {
 		defer h.wg.Done()
+		defer func() { <-h.sem }()
 		h.post(ev)
 	}()
 }
@@ -216,7 +225,10 @@ func (h *WebhookNotifier) post(ev *event) {
 		return
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, h.url, bytes.NewReader(body))
+	reqCtx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, h.url, bytes.NewReader(body))
 	if err != nil {
 		errors.LogWarning(context.Background(), "webhook: request build failed: ", err)
 		return
@@ -280,6 +292,9 @@ func (h *WebhookNotifier) cleanupLoop() {
 func (h *WebhookNotifier) Close() error {
 	h.closeOnce.Do(func() {
 		close(h.done)
+		if h.cancel != nil {
+			h.cancel()
+		}
 	})
 	h.wg.Wait()
 	h.client.CloseIdleConnections()

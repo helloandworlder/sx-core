@@ -62,11 +62,11 @@ func TestManager_SetZeroRemovesLimiter(t *testing.T) {
 	m.Set("user@test", 1_000_000, 1_000_000)
 	// Update to 0 = remove limiter
 	ul := m.Set("user@test", 0, 0)
-	if ul.Egress != nil {
-		t.Error("expected nil egress after setting 0")
+	if ul != nil {
+		t.Fatal("expected nil limiter when setting both directions to 0")
 	}
-	if ul.Ingress != nil {
-		t.Error("expected nil ingress after setting 0")
+	if m.Get("user@test") != nil {
+		t.Fatal("expected limiter to be removed from manager")
 	}
 }
 

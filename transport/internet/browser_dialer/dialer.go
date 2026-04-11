@@ -6,7 +6,9 @@ import (
 	_ "embed"
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -19,10 +21,10 @@ import (
 var webpage []byte
 
 type task struct {
-	Method string `json:"method"`
-	URL    string `json:"url"`
-	Extra  any    `json:"extra,omitempty"`
-	StreamResponse bool `json:"streamResponse"`
+	Method         string `json:"method"`
+	URL            string `json:"url"`
+	Extra          any    `json:"extra,omitempty"`
+	StreamResponse bool   `json:"streamResponse"`
 }
 
 var conns chan *websocket.Conn
@@ -31,18 +33,62 @@ var upgrader = &websocket.Upgrader{
 	ReadBufferSize:   0,
 	WriteBufferSize:  0,
 	HandshakeTimeout: time.Second * 4,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+}
+
+func isAllowedLoopbackAddress(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
+func allowedOriginsFor(addr string) map[string]struct{} {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil
+	}
+
+	origins := map[string]struct{}{}
+	add := func(h string) {
+		origins["http://"+net.JoinHostPort(h, port)] = struct{}{}
+	}
+
+	switch host {
+	case "127.0.0.1", "localhost":
+		add("127.0.0.1")
+		add("localhost")
+	case "::1":
+		add("localhost")
+		add("127.0.0.1")
+	default:
+		add(host)
+	}
+
+	return origins
 }
 
 func init() {
 	addr := platform.NewEnvFlag(platform.BrowserDialerAddress).GetValue(func() string { return "" })
 	if addr != "" {
+		if !isAllowedLoopbackAddress(addr) {
+			errors.LogError(context.Background(), "Browser dialer address must be loopback")
+			return
+		}
+
 		token := uuid.New()
 		csrfToken := token.String()
 		webpage = bytes.ReplaceAll(webpage, []byte("csrfToken"), []byte(csrfToken))
 		conns = make(chan *websocket.Conn, 256)
+		allowedOrigins := allowedOriginsFor(addr)
+		upgrader.CheckOrigin = func(r *http.Request) bool {
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
+			if origin == "" {
+				return false
+			}
+			_, ok := allowedOrigins[origin]
+			return ok
+		}
 		go http.ListenAndServe(addr, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/websocket" {
 				if r.URL.Query().Get("token") == csrfToken {
@@ -53,7 +99,6 @@ func init() {
 					}
 				}
 			} else {
-				w.Header().Set("Access-Control-Allow-Origin", "*");
 				w.Write(webpage)
 			}
 		}))
@@ -70,8 +115,8 @@ type webSocketExtra struct {
 
 func DialWS(uri string, ed []byte) (*websocket.Conn, error) {
 	task := task{
-		Method: "WS",
-		URL:    uri,
+		Method:         "WS",
+		URL:            uri,
 		StreamResponse: true,
 	}
 
@@ -120,9 +165,9 @@ func httpExtraFromHeadersAndCookies(headers http.Header, cookies []*http.Cookie)
 
 func DialGet(uri string, headers http.Header, cookies []*http.Cookie) (*websocket.Conn, error) {
 	task := task{
-		Method: "GET",
-		URL:    uri,
-		Extra:  httpExtraFromHeadersAndCookies(headers, cookies),
+		Method:         "GET",
+		URL:            uri,
+		Extra:          httpExtraFromHeadersAndCookies(headers, cookies),
 		StreamResponse: true,
 	}
 
@@ -135,9 +180,9 @@ func DialPacket(method string, uri string, headers http.Header, cookies []*http.
 
 func dialWithBody(method string, uri string, headers http.Header, cookies []*http.Cookie, payload []byte) error {
 	task := task{
-		Method: method,
-		URL:    uri,
-		Extra:  httpExtraFromHeadersAndCookies(headers, cookies),
+		Method:         method,
+		URL:            uri,
+		Extra:          httpExtraFromHeadersAndCookies(headers, cookies),
 		StreamResponse: false,
 	}
 

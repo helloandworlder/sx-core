@@ -3,6 +3,7 @@ package commander
 import (
 	"context"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/xtls/xray-core/common"
@@ -58,6 +59,27 @@ func (c *Commander) Type() interface{} {
 	return (*Commander)(nil)
 }
 
+func resolveListenTarget(addr string) (network string, target string, err error) {
+	if strings.HasPrefix(addr, "unix:") {
+		target = strings.TrimPrefix(addr, "unix:")
+		if target == "" {
+			return "", "", errors.New("unix listen path can't be empty")
+		}
+		return "unix", target, nil
+	}
+
+	host, _, splitErr := net.SplitHostPort(addr)
+	if splitErr != nil {
+		return "", "", errors.New("API listen address must include an explicit loopback host and port").Base(splitErr)
+	}
+
+	if host != "127.0.0.1" && host != "::1" && host != "localhost" {
+		return "", "", errors.New("API listen address must be loopback or unix")
+	}
+
+	return "tcp", addr, nil
+}
+
 // Start implements common.Runnable.
 func (c *Commander) Start() error {
 	c.Lock()
@@ -74,7 +96,11 @@ func (c *Commander) Start() error {
 	}
 
 	if len(c.listen) > 0 {
-		if l, err := net.Listen("tcp", c.listen); err != nil {
+		network, target, err := resolveListenTarget(c.listen)
+		if err != nil {
+			return err
+		}
+		if l, err := net.Listen(network, target); err != nil {
 			errors.LogErrorInner(context.Background(), err, "API server failed to listen on ", c.listen)
 			return err
 		} else {
