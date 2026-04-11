@@ -37,10 +37,17 @@ jobs:
             go build -trimpath -ldflags="-s -w" \
             -o sx-core-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} ./main
 
+      - name: Generate sha256 checksum
+        run: |
+          sha256sum sx-core-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }} \
+            > sx-core-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}.sha256
+
       - uses: actions/upload-artifact@v4
         with:
           name: sx-core-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: sx-core-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+          path: |
+            sx-core-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}
+            sx-core-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.ext }}.sha256
 
   docker:
     runs-on: ubuntu-latest
