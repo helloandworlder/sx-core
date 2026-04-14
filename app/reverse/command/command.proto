@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package xray.app.reverse.command;
+option csharp_namespace = "Xray.App.Reverse.Command";
+option go_package = "github.com/xtls/xray-core/app/reverse/command";
+option java_package = "com.xray.app.reverse.command";
+option java_multiple_files = true;
+
+import "app/reverse/config.proto";
+
+message ReplaceConfigRequest {
+  xray.app.reverse.Config config = 1;
+}
+
+message ReplaceConfigResponse {}
+
+service ReverseService {
+  rpc ReplaceConfig(ReplaceConfigRequest) returns (ReplaceConfigResponse) {}
+}
+
+message Config {}

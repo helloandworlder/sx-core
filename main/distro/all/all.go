@@ -13,6 +13,7 @@ import (
 	_ "github.com/xtls/xray-core/app/log/command"
 	_ "github.com/xtls/xray-core/app/proxyman/command"
 	_ "github.com/xtls/xray-core/app/ratelimit/command"
+	_ "github.com/xtls/xray-core/app/reverse/command"
 	_ "github.com/xtls/xray-core/app/stats/command"
 
 	// Developer preview services

@@ -7,7 +7,9 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/xtls/xray-core/common"
@@ -31,6 +33,7 @@ import (
 type Server struct {
 	config        *ServerConfig
 	policyManager policy.Manager
+	accountMu     sync.RWMutex
 }
 
 // NewServer creates a new HTTP inbound handler.
@@ -42,6 +45,105 @@ func NewServer(ctx context.Context, config *ServerConfig) (*Server, error) {
 	}
 
 	return s, nil
+}
+
+func (s *Server) AddUser(ctx context.Context, u *protocol.MemoryUser) error {
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+
+	account, ok := u.Account.(*Account)
+	if !ok {
+		return errors.New("http proxy expected http.Account")
+	}
+	if s.config.Accounts == nil {
+		s.config.Accounts = make(map[string]string)
+	}
+	if s.config.AccountEmails == nil {
+		s.config.AccountEmails = make(map[string]string)
+	}
+	s.config.Accounts[account.Username] = account.Password
+	s.config.AccountEmails[account.Username] = u.Email
+	return nil
+}
+
+func (s *Server) RemoveUser(ctx context.Context, email string) error {
+	s.accountMu.Lock()
+	defer s.accountMu.Unlock()
+
+	if s.config.AccountEmails == nil {
+		return nil
+	}
+	for username, mappedEmail := range s.config.AccountEmails {
+		if mappedEmail != email {
+			continue
+		}
+		delete(s.config.AccountEmails, username)
+		if s.config.Accounts != nil {
+			delete(s.config.Accounts, username)
+		}
+		break
+	}
+	return nil
+}
+
+func (s *Server) GetUser(ctx context.Context, email string) *protocol.MemoryUser {
+	s.accountMu.RLock()
+	defer s.accountMu.RUnlock()
+
+	if s.config.AccountEmails == nil {
+		return nil
+	}
+	for username, mappedEmail := range s.config.AccountEmails {
+		if mappedEmail != email {
+			continue
+		}
+		password := ""
+		if s.config.Accounts != nil {
+			password = s.config.Accounts[username]
+		}
+		return &protocol.MemoryUser{
+			Email: mappedEmail,
+			Level: s.config.UserLevel,
+			Account: &Account{
+				Username: username,
+				Password: password,
+			},
+		}
+	}
+	return nil
+}
+
+func (s *Server) GetUsers(ctx context.Context) []*protocol.MemoryUser {
+	s.accountMu.RLock()
+	defer s.accountMu.RUnlock()
+
+	if len(s.config.AccountEmails) == 0 {
+		return nil
+	}
+	usernames := make([]string, 0, len(s.config.AccountEmails))
+	for username := range s.config.AccountEmails {
+		usernames = append(usernames, username)
+	}
+	sort.Strings(usernames)
+
+	users := make([]*protocol.MemoryUser, 0, len(usernames))
+	for _, username := range usernames {
+		users = append(users, &protocol.MemoryUser{
+			Email: s.config.AccountEmails[username],
+			Level: s.config.UserLevel,
+			Account: &Account{
+				Username: username,
+				Password: s.config.Accounts[username],
+			},
+		})
+	}
+	return users
+}
+
+func (s *Server) GetUsersCount(ctx context.Context) int64 {
+	s.accountMu.RLock()
+	defer s.accountMu.RUnlock()
+	return int64(len(s.config.AccountEmails))
 }
 
 func (s *Server) policy() policy.Session {

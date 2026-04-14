@@ -2,6 +2,7 @@ package reverse
 
 import (
 	"context"
+	"sync"
 
 	"github.com/xtls/xray-core/common"
 	"github.com/xtls/xray-core/common/errors"
@@ -38,24 +39,65 @@ func init() {
 type Reverse struct {
 	bridges []*Bridge
 	portals []*Portal
+	dispatcher routing.Dispatcher
+	ohm        outbound.Manager
+	running    bool
+	mu         sync.Mutex
 }
 
 func (r *Reverse) Init(config *Config, d routing.Dispatcher, ohm outbound.Manager) error {
+	r.dispatcher = d
+	r.ohm = ohm
+	return r.replaceConfigLocked(config)
+}
+
+func (r *Reverse) replaceConfigLocked(config *Config) error {
+	bridges := make([]*Bridge, 0, len(config.BridgeConfig))
+	portals := make([]*Portal, 0, len(config.PortalConfig))
+
 	for _, bConfig := range config.BridgeConfig {
-		b, err := NewBridge(bConfig, d)
+		b, err := NewBridge(bConfig, r.dispatcher)
 		if err != nil {
 			return err
 		}
-		r.bridges = append(r.bridges, b)
+		bridges = append(bridges, b)
 	}
 
 	for _, pConfig := range config.PortalConfig {
-		p, err := NewPortal(pConfig, ohm)
+		p, err := NewPortal(pConfig, r.ohm)
 		if err != nil {
+			for _, bridge := range bridges {
+				_ = bridge.Close()
+			}
 			return err
 		}
-		r.portals = append(r.portals, p)
+		portals = append(portals, p)
 	}
+
+	oldBridges := r.bridges
+	oldPortals := r.portals
+
+	if r.running {
+		for _, bridge := range oldBridges {
+			_ = bridge.Close()
+		}
+		for _, portal := range oldPortals {
+			_ = portal.Close()
+		}
+		for _, bridge := range bridges {
+			if err := bridge.Start(); err != nil {
+				return err
+			}
+		}
+		for _, portal := range portals {
+			if err := portal.Start(); err != nil {
+				return err
+			}
+		}
+	}
+
+	r.bridges = bridges
+	r.portals = portals
 
 	return nil
 }
@@ -65,6 +107,8 @@ func (r *Reverse) Type() interface{} {
 }
 
 func (r *Reverse) Start() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, b := range r.bridges {
 		if err := b.Start(); err != nil {
 			return err
@@ -76,11 +120,14 @@ func (r *Reverse) Start() error {
 			return err
 		}
 	}
+	r.running = true
 
 	return nil
 }
 
 func (r *Reverse) Close() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var errs []error
 	for _, b := range r.bridges {
 		errs = append(errs, b.Close())
@@ -89,6 +136,13 @@ func (r *Reverse) Close() error {
 	for _, p := range r.portals {
 		errs = append(errs, p.Close())
 	}
+	r.running = false
 
 	return errors.Combine(errs...)
+}
+
+func (r *Reverse) ReplaceConfig(config *Config) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.replaceConfigLocked(config)
 }
