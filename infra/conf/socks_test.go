@@ -22,7 +22,8 @@ func TestSocksInboundConfig(t *testing.T) {
 				"accounts": [
 					{
 						"user": "my-username",
-						"pass": "my-password"
+						"pass": "my-password",
+						"email": "line-internal-id"
 					}
 				],
 				"udp": false,
@@ -34,6 +35,9 @@ func TestSocksInboundConfig(t *testing.T) {
 				AuthType: socks.AuthType_PASSWORD,
 				Accounts: map[string]string{
 					"my-username": "my-password",
+				},
+				AccountEmails: map[string]string{
+					"my-username": "line-internal-id",
 				},
 				UdpEnabled: false,
 				Address: &net.IPOrDomain{

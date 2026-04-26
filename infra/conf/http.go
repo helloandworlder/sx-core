@@ -13,7 +13,7 @@ import (
 type HTTPAccount struct {
 	Username string `json:"user"`
 	Password string `json:"pass"`
-	Email    string `json:"email"` // sx-core: optional internal email (UUIDv7), defaults to username
+	Email    string `json:"email"`
 }
 
 func (v *HTTPAccount) Build() *http.Account {

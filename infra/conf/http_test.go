@@ -18,7 +18,8 @@ func TestHTTPServerConfig(t *testing.T) {
 				"accounts": [
 					{
 						"user": "my-username",
-						"pass": "my-password"
+						"pass": "my-password",
+						"email": "line-internal-id"
 					}
 				],
 				"allowTransparent": true,
@@ -28,6 +29,9 @@ func TestHTTPServerConfig(t *testing.T) {
 			Output: &http.ServerConfig{
 				Accounts: map[string]string{
 					"my-username": "my-password",
+				},
+				AccountEmails: map[string]string{
+					"my-username": "line-internal-id",
 				},
 				AllowTransparent: true,
 				UserLevel:        1,

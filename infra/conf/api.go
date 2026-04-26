@@ -8,6 +8,7 @@ import (
 	observatoryservice "github.com/xtls/xray-core/app/observatory/command"
 	handlerservice "github.com/xtls/xray-core/app/proxyman/command"
 	ratelimitservice "github.com/xtls/xray-core/app/ratelimit/command"
+	reverseservice "github.com/xtls/xray-core/app/reverse/command"
 	routerservice "github.com/xtls/xray-core/app/router/command"
 	statsservice "github.com/xtls/xray-core/app/stats/command"
 	"github.com/xtls/xray-core/common/errors"
@@ -36,12 +37,17 @@ func (c *APIConfig) Build() (*commander.Config, error) {
 			services = append(services, serial.ToTypedMessage(&loggerservice.Config{}))
 		case "statsservice":
 			services = append(services, serial.ToTypedMessage(&statsservice.Config{}))
-		case "ratelimitservice":
-			services = append(services, serial.ToTypedMessage(&ratelimitservice.Config{}))
 		case "observatoryservice":
 			services = append(services, serial.ToTypedMessage(&observatoryservice.Config{}))
 		case "routingservice":
 			services = append(services, serial.ToTypedMessage(&routerservice.Config{}))
+		case "ratelimitservice":
+			// sx-core extension: per-user bandwidth caps via gRPC.
+			services = append(services, serial.ToTypedMessage(&ratelimitservice.Config{}))
+		case "reverseservice":
+			// sx-core extension: hot-replace reverse-proxy config via gRPC
+			// (used by sx-ui /api/setting/runtimeApply).
+			services = append(services, serial.ToTypedMessage(&reverseservice.Config{}))
 		}
 	}
 

@@ -218,6 +218,7 @@ func getConfigFormat() string {
 
 func startXray() (core.Server, error) {
 	configFiles := getConfigFilePath(true)
+	loadRateLimits(configFiles)
 
 	// config, err := core.LoadConfig(getConfigFormat(), configFiles[0], configFiles)
 
@@ -226,16 +227,19 @@ func startXray() (core.Server, error) {
 		return nil, errors.New("failed to load config files: [", configFiles.String(), "]").Base(err)
 	}
 
-	// sx-core: load rate limits from config JSON before Xray starts.
-	// sx-ui injects "rateLimits" into the config file.
-	for _, f := range configFiles {
-		ratelimit.LoadFromConfigFile(f)
-	}
-
 	server, err := core.New(c)
 	if err != nil {
 		return nil, errors.New("failed to create server").Base(err)
 	}
 
 	return server, nil
+}
+
+func loadRateLimits(files cmdarg.Arg) {
+	for _, file := range files {
+		if file == "" || strings.HasPrefix(file, "stdin:") {
+			continue
+		}
+		ratelimit.LoadFromConfigFile(file)
+	}
 }
