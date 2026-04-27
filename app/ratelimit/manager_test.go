@@ -56,6 +56,36 @@ func TestManager_UpdateExisting(t *testing.T) {
 	}
 }
 
+func TestManager_SetWithBurstStoresEmailScopedBurstLimits(t *testing.T) {
+	m := &RateLimitManager{users: sync.Map{}}
+
+	m.SetWithBurst("D20668679", 1_000_000, 1_000_000, 2_000_000, 2_000_000, 30, 300)
+
+	info := m.Get("D20668679")
+	if info == nil {
+		t.Fatal("expected limiter for XrayCore email")
+	}
+	if info.Egress == nil || info.Egress.Rate() != 2_000_000 {
+		t.Fatalf("expected egress burst rate 2000000, got %#v", info.Egress)
+	}
+	all := m.ListAll()
+	if len(all) != 1 {
+		t.Fatalf("expected 1 limiter, got %d", len(all))
+	}
+	if all[0].Email != "D20668679" {
+		t.Fatalf("expected email key D20668679, got %s", all[0].Email)
+	}
+	if all[0].EgressLimitBps != 1_000_000 || all[0].IngressLimitBps != 1_000_000 {
+		t.Fatalf("expected base limits in ListAll, got egress=%d ingress=%d", all[0].EgressLimitBps, all[0].IngressLimitBps)
+	}
+	if all[0].BurstEgressLimitBps != 2_000_000 || all[0].BurstIngressLimitBps != 2_000_000 {
+		t.Fatalf("expected burst limits in ListAll, got egress=%d ingress=%d", all[0].BurstEgressLimitBps, all[0].BurstIngressLimitBps)
+	}
+	if all[0].BurstDurationSeconds != 30 || all[0].BurstCooldownSeconds != 300 {
+		t.Fatalf("expected burst window 30/300, got %d/%d", all[0].BurstDurationSeconds, all[0].BurstCooldownSeconds)
+	}
+}
+
 func TestManager_SetZeroRemovesLimiter(t *testing.T) {
 	m := &RateLimitManager{users: sync.Map{}}
 

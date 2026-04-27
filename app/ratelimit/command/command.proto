@@ -12,12 +12,20 @@ message UserRateLimit {
   int64 ingress_limit_bps = 3;
   int64 egress_bps = 4;
   int64 ingress_bps = 5;
+  int64 burst_egress_limit_bps = 6;
+  int64 burst_ingress_limit_bps = 7;
+  int64 burst_duration_seconds = 8;
+  int64 burst_cooldown_seconds = 9;
 }
 
 message SetUserRateLimitRequest {
   string email = 1;
   int64 egress_bps = 2;
   int64 ingress_bps = 3;
+  int64 burst_egress_bps = 4;
+  int64 burst_ingress_bps = 5;
+  int64 burst_duration_seconds = 6;
+  int64 burst_cooldown_seconds = 7;
 }
 
 message SetUserRateLimitResponse {}

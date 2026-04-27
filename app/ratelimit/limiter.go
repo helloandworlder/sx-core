@@ -21,21 +21,46 @@ const (
 // TokenBucket implements a classic token bucket rate limiter.
 // It is safe for concurrent use.
 type TokenBucket struct {
-	rate          int64 // bytes added per second
-	capacity      int64 // max scheduling tolerance in bytes
-	quantum       int64 // preferred paced chunk size in bytes
-	nextAvailable int64 // unix nanoseconds when the next chunk may be sent
-	mu            sync.Mutex
+	rate             int64 // base bytes added per second
+	burstRate        int64 // temporary burst bytes per second
+	burstDuration    time.Duration
+	burstCooldown    time.Duration
+	burstActiveUntil int64 // unix nanoseconds
+	nextBurstAt      int64 // unix nanoseconds
+	capacity         int64 // max scheduling tolerance in bytes
+	quantum          int64 // preferred paced chunk size in bytes
+	nextAvailable    int64 // unix nanoseconds when the next chunk may be sent
+	mu               sync.Mutex
 }
 
 // NewTokenBucket creates a token bucket with the given rate (bytes/sec).
 // Internally it behaves as a paced leaky bucket with a tiny burst tolerance.
 func NewTokenBucket(bytesPerSec int64) *TokenBucket {
+	return NewTokenBucketWithBurst(bytesPerSec, 0, 0, 0)
+}
+
+// NewTokenBucketWithBurst creates a token bucket with an optional temporary
+// burst rate. The burst window starts on first activity after cooldown and is
+// shared by all connections using this bucket.
+func NewTokenBucketWithBurst(
+	bytesPerSec int64,
+	burstBytesPerSec int64,
+	burstDuration time.Duration,
+	burstCooldown time.Duration,
+) *TokenBucket {
 	if bytesPerSec <= 0 {
 		return nil // no limit
 	}
+	if burstBytesPerSec <= bytesPerSec || burstDuration <= 0 {
+		burstBytesPerSec = 0
+		burstDuration = 0
+		burstCooldown = 0
+	}
 	return &TokenBucket{
 		rate:          bytesPerSec,
+		burstRate:     burstBytesPerSec,
+		burstDuration: burstDuration,
+		burstCooldown: burstCooldown,
 		capacity:      burstBytes(bytesPerSec),
 		quantum:       pacingQuantum(bytesPerSec),
 		nextAvailable: time.Now().UnixNano(),
@@ -70,18 +95,34 @@ func (tb *TokenBucket) reserve(chunk int64) time.Duration {
 	if tb.nextAvailable < now-int64(defaultBurstWindow) {
 		tb.nextAvailable = now - int64(defaultBurstWindow)
 	}
+	rate := tb.effectiveRateLocked(now)
 
 	startAt := tb.nextAvailable
 	if startAt < now {
 		startAt = now
 	}
-	serviceNs := chunkDurationNs(chunk, tb.rate)
+	serviceNs := chunkDurationNs(chunk, rate)
 	tb.nextAvailable = startAt + serviceNs
 
 	if startAt <= now {
 		return 0
 	}
 	return time.Duration(startAt - now)
+}
+
+func (tb *TokenBucket) effectiveRateLocked(now int64) int64 {
+	if tb.burstRate <= tb.rate || tb.burstDuration <= 0 {
+		return tb.rate
+	}
+	if tb.burstActiveUntil > now {
+		return tb.burstRate
+	}
+	if tb.nextBurstAt <= now {
+		tb.burstActiveUntil = now + int64(tb.burstDuration)
+		tb.nextBurstAt = tb.burstActiveUntil + int64(tb.burstCooldown)
+		return tb.burstRate
+	}
+	return tb.rate
 }
 
 func chunkDurationNs(chunk, rate int64) int64 {
@@ -126,9 +167,29 @@ func (tb *TokenBucket) refillLocked() {
 
 // UpdateRate changes the rate limit dynamically.
 func (tb *TokenBucket) UpdateRate(bytesPerSec int64) {
+	tb.UpdateConfig(bytesPerSec, 0, 0, 0)
+}
+
+// UpdateConfig changes the base and burst rate limits dynamically.
+func (tb *TokenBucket) UpdateConfig(
+	bytesPerSec int64,
+	burstBytesPerSec int64,
+	burstDuration time.Duration,
+	burstCooldown time.Duration,
+) {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
 	tb.rate = bytesPerSec
+	if burstBytesPerSec <= bytesPerSec || burstDuration <= 0 {
+		burstBytesPerSec = 0
+		burstDuration = 0
+		burstCooldown = 0
+		tb.burstActiveUntil = 0
+		tb.nextBurstAt = 0
+	}
+	tb.burstRate = burstBytesPerSec
+	tb.burstDuration = burstDuration
+	tb.burstCooldown = burstCooldown
 	tb.capacity = burstBytes(bytesPerSec)
 	tb.quantum = pacingQuantum(bytesPerSec)
 	now := time.Now().UnixNano()
@@ -141,7 +202,21 @@ func (tb *TokenBucket) UpdateRate(bytesPerSec int64) {
 func (tb *TokenBucket) Rate() int64 {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
+	return tb.effectiveRateLocked(time.Now().UnixNano())
+}
+
+// BaseRate returns the configured non-burst rate in bytes/sec.
+func (tb *TokenBucket) BaseRate() int64 {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
 	return tb.rate
+}
+
+// BurstConfig returns the configured burst rate and window.
+func (tb *TokenBucket) BurstConfig() (burstBytesPerSec int64, duration time.Duration, cooldown time.Duration) {
+	tb.mu.Lock()
+	defer tb.mu.Unlock()
+	return tb.burstRate, tb.burstDuration, tb.burstCooldown
 }
 
 func minInt64(a, b int64) int64 {
@@ -165,14 +240,27 @@ type UserLimiter struct {
 
 // NewUserLimiter creates a rate limiter pair for one user.
 func NewUserLimiter(email string, egressBps, ingressBps int64) *UserLimiter {
+	return NewUserLimiterWithBurst(email, egressBps, ingressBps, 0, 0, 0, 0)
+}
+
+// NewUserLimiterWithBurst creates a limiter pair keyed by XrayCore client email.
+func NewUserLimiterWithBurst(
+	email string,
+	egressBps int64,
+	ingressBps int64,
+	burstEgressBps int64,
+	burstIngressBps int64,
+	burstDuration time.Duration,
+	burstCooldown time.Duration,
+) *UserLimiter {
 	ul := &UserLimiter{
 		Email: email,
 	}
 	if egressBps > 0 {
-		ul.Egress = NewTokenBucket(egressBps)
+		ul.Egress = NewTokenBucketWithBurst(egressBps, burstEgressBps, burstDuration, burstCooldown)
 	}
 	if ingressBps > 0 {
-		ul.Ingress = NewTokenBucket(ingressBps)
+		ul.Ingress = NewTokenBucketWithBurst(ingressBps, burstIngressBps, burstDuration, burstCooldown)
 	}
 	ul.lastReset.Store(time.Now().UnixNano())
 	return ul

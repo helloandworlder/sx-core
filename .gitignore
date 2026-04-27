@@ -29,6 +29,7 @@
 
 # Go build binaries
 xray
+xray-linux-amd64
 xray_softfloat
 mockgen
 vprotogen

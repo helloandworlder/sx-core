@@ -28,14 +28,17 @@ func LoadFromConfigFile(configPath string) {
 	LoadFromJSON(data)
 }
 
-
 // LoadFromJSON parses the Xray config JSON and loads rate limits into Manager.
 func LoadFromJSON(configJSON []byte) {
 	var cfg struct {
 		RateLimits []struct {
-			Email      string `json:"email"`
-			EgressBps  int64  `json:"egressBps"`
-			IngressBps int64  `json:"ingressBps"`
+			Email                string `json:"email"`
+			EgressBps            int64  `json:"egressBps"`
+			IngressBps           int64  `json:"ingressBps"`
+			BurstEgressBps       int64  `json:"burstEgressBps"`
+			BurstIngressBps      int64  `json:"burstIngressBps"`
+			BurstDurationSeconds int64  `json:"burstDurationSeconds"`
+			BurstCooldownSeconds int64  `json:"burstCooldownSeconds"`
 		} `json:"rateLimits"`
 	}
 	if err := json.Unmarshal(configJSON, &cfg); err != nil {
@@ -45,8 +48,16 @@ func LoadFromJSON(configJSON []byte) {
 	for _, rl := range cfg.RateLimits {
 		email := strings.TrimSpace(rl.Email)
 		if email != "" && (rl.EgressBps > 0 || rl.IngressBps > 0) {
-			Manager.Set(email, rl.EgressBps, rl.IngressBps)
-			fmt.Fprintf(os.Stderr, "[sx-core] ratelimit loaded: %s egress=%d ingress=%d bps\n", email, rl.EgressBps, rl.IngressBps)
+			Manager.SetWithBurst(
+				email,
+				rl.EgressBps,
+				rl.IngressBps,
+				rl.BurstEgressBps,
+				rl.BurstIngressBps,
+				rl.BurstDurationSeconds,
+				rl.BurstCooldownSeconds,
+			)
+			fmt.Fprintf(os.Stderr, "[sx-core] ratelimit loaded: %s egress=%d ingress=%d burstEgress=%d burstIngress=%d bps\n", email, rl.EgressBps, rl.IngressBps, rl.BurstEgressBps, rl.BurstIngressBps)
 		}
 	}
 	if len(cfg.RateLimits) > 0 {

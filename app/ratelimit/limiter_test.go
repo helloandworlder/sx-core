@@ -80,6 +80,22 @@ func TestTokenBucket_UpdateRate(t *testing.T) {
 	}
 }
 
+func TestTokenBucket_BurstWindowFallsBackToBaseRate(t *testing.T) {
+	tb := NewTokenBucketWithBurst(100_000, 1_000_000, 100*time.Millisecond, time.Hour)
+	if tb == nil {
+		t.Fatal("expected non-nil bucket")
+	}
+	if tb.Rate() != 1_000_000 {
+		t.Fatalf("expected burst rate on first activity, got %d", tb.Rate())
+	}
+
+	time.Sleep(150 * time.Millisecond)
+
+	if tb.Rate() != 100_000 {
+		t.Fatalf("expected base rate after burst window, got %d", tb.Rate())
+	}
+}
+
 func TestTokenBucket_ConcurrentAccess(t *testing.T) {
 	tb := NewTokenBucket(10_000_000) // 10MB/s
 

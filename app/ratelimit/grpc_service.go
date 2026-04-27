@@ -9,6 +9,27 @@ func SetUserRateLimit(email string, egressBps, ingressBps int64) {
 	Manager.Set(email, egressBps, ingressBps)
 }
 
+// SetUserRateLimitWithBurst sets or updates the rate limit and burst window for a user.
+func SetUserRateLimitWithBurst(
+	email string,
+	egressBps int64,
+	ingressBps int64,
+	burstEgressBps int64,
+	burstIngressBps int64,
+	burstDurationSeconds int64,
+	burstCooldownSeconds int64,
+) {
+	Manager.SetWithBurst(
+		email,
+		egressBps,
+		ingressBps,
+		burstEgressBps,
+		burstIngressBps,
+		burstDurationSeconds,
+		burstCooldownSeconds,
+	)
+}
+
 // GetUserRateLimit returns the current rate limit and speed for a user.
 // Returns nil if no limit is set.
 func GetUserRateLimit(email string) *UserSpeedInfo {
@@ -23,11 +44,15 @@ func GetUserRateLimit(email string) *UserSpeedInfo {
 		IngressBps: iSpeed,
 	}
 	if ul.Egress != nil {
-		info.EgressLimitBps = ul.Egress.Rate()
+		info.EgressLimitBps = ul.Egress.BaseRate()
+		info.BurstEgressLimitBps, info.BurstDuration, info.BurstCooldown = ul.Egress.BurstConfig()
 	}
 	if ul.Ingress != nil {
-		info.IngressLimitBps = ul.Ingress.Rate()
+		info.IngressLimitBps = ul.Ingress.BaseRate()
+		info.BurstIngressLimitBps, info.BurstDuration, info.BurstCooldown = ul.Ingress.BurstConfig()
 	}
+	info.BurstDurationSeconds = int64(info.BurstDuration.Seconds())
+	info.BurstCooldownSeconds = int64(info.BurstCooldown.Seconds())
 	return info
 }
 

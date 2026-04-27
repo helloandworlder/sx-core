@@ -19,11 +19,15 @@ func NewRateLimitServer() RateLimitServiceServer {
 
 func toProtoInfo(info ratelimit.UserSpeedInfo) *UserRateLimit {
 	return &UserRateLimit{
-		Email:           info.Email,
-		EgressLimitBps:  info.EgressLimitBps,
-		IngressLimitBps: info.IngressLimitBps,
-		EgressBps:       info.EgressBps,
-		IngressBps:      info.IngressBps,
+		Email:                info.Email,
+		EgressLimitBps:       info.EgressLimitBps,
+		IngressLimitBps:      info.IngressLimitBps,
+		EgressBps:            info.EgressBps,
+		IngressBps:           info.IngressBps,
+		BurstEgressLimitBps:  info.BurstEgressLimitBps,
+		BurstIngressLimitBps: info.BurstIngressLimitBps,
+		BurstDurationSeconds: info.BurstDurationSeconds,
+		BurstCooldownSeconds: info.BurstCooldownSeconds,
 	}
 }
 
@@ -31,7 +35,15 @@ func (s *rateLimitServer) SetUserRateLimit(ctx context.Context, request *SetUser
 	if request.GetEmail() == "" {
 		return nil, status.Error(codes.InvalidArgument, "email is required")
 	}
-	ratelimit.Manager.Set(request.GetEmail(), request.GetEgressBps(), request.GetIngressBps())
+	ratelimit.Manager.SetWithBurst(
+		request.GetEmail(),
+		request.GetEgressBps(),
+		request.GetIngressBps(),
+		request.GetBurstEgressBps(),
+		request.GetBurstIngressBps(),
+		request.GetBurstDurationSeconds(),
+		request.GetBurstCooldownSeconds(),
+	)
 	return &SetUserRateLimitResponse{}, nil
 }
 
