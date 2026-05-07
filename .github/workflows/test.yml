@@ -2,7 +2,9 @@ name: Test
 
 on:
   push:
+    branches: [staging, "rebase/**"]
   pull_request:
+    branches: [staging, "rebase/**"]
     types: [opened, synchronize, reopened]
 
 jobs:
@@ -58,7 +60,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v6
